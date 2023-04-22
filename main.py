@@ -30,10 +30,11 @@ sensor_brake = machine.ADC(1)
 # 前回の読み取り値を初期化
 t_before_read = sensor_throttle.read_u16()
 
-# 急な操作をキャンセルするための差分閾値、緩やかに加速するための時間差、制限値を設定
+# 急な操作をキャンセルするための差分閾値、緩やかに加速するための時間差、加速単位、制限値を設定
 diff_term = 0.1
+diff_unit = 1000
 diff_limit = 10000
-low_limit = 18000
+low_limit = 40000
 high_limit = 65535
 
 # 制限フラグの初期化
@@ -66,6 +67,9 @@ while True:
                 limit_over = True
                 print("limit over")
             else:
+                # 穏やかに加速するため、加速単位以上の加速を抑える
+                if t_reading > t_before_read + diff_unit:
+                    t_reading = t_before_read + diff_unit
                 # スロットルセンサーの値をPWMのデューティー比に反映する
                 t_pwm_l.duty_u16(int(t_reading))
                 t_pwm_r.duty_u16(int(t_reading))
@@ -74,7 +78,7 @@ while True:
             t_pwm_l.duty_u16(int(t_reading))
             t_pwm_r.duty_u16(int(t_reading))
 
-    # ブレーキセンサーの 下限値を下回る場合はデューティー比を0 にする
+    #  加速に合わせ、ブレーキセンサーが下限値を下回る場合はデューティー比を0にする
     if b_reading < low_limit:
         b_reading = 0
     
