@@ -34,7 +34,8 @@ t_before_read = sensor_throttle.read_u16()
 diff_term = 0.1
 diff_unit = 1000
 diff_limit = 10000
-low_limit = 40000
+b_low_limit = 40000
+t_low_limit = 20000
 high_limit = 65535
 
 # 制限フラグの初期化
@@ -56,7 +57,8 @@ while True:
 
     # 制限フラグがONの場合は前回の値に戻す
     if limit_over:
-        if t_reading < t_before_read:
+        # スロットルが下限値より小さい場合に制限フラグをOFFにする
+        if t_reading < t_low_limit:
             limit_over = False
             print("limit off")
         t_reading = t_before_read
@@ -65,6 +67,7 @@ while True:
         if t_reading > t_before_read:
             if t_reading - t_before_read > diff_limit:
                 limit_over = True
+                t_reading = t_low_limit
                 print("limit over")
             else:
                 # 穏やかに加速するため、加速単位以上の加速を抑える
@@ -78,8 +81,8 @@ while True:
             t_pwm_l.duty_u16(int(t_reading))
             t_pwm_r.duty_u16(int(t_reading))
 
-    #  加速に合わせ、ブレーキセンサーが下限値を下回る場合はデューティー比を0にする
-    if b_reading < low_limit:
+    #  加速に合わせ、ブレーキセンサーが下限値を下回る場合はデューティー比を0(ブレーキなし)にする
+    if b_reading < b_low_limit:
         b_reading = 0
     
     # ブレーキセンサーの値をPWMのデューティー比に反映する
