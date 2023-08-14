@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>スライダーと非同期通信</title>
+<style>
+  body {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    margin: 0;
+  }
+  .slider-container {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 20px;
+  }
+  .slider-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+  .sliderValues {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
+</style>
+</head>
+<body>
+  <div>
+  <div class="slider-container">
+    <div class="slider-row">
+      <input type="range" id="leftSlider" min="0" max="65535" value="0">
+      <span id="leftSliderValue">0</span>
+    </div>
+    <div class="slider-row">
+      <input type="range" id="rightSlider" min="0" max="65535" value="0">
+      <span id="rightSliderValue">0</span>
+    </div>
+  </div>
+  <div class="slider-container">
+    <div id="slider-row">
+      <div id ="sliderValue1">Left:0</div>
+    </div>
+    <div id="slider-row">
+      <div id ="sliderValue2">Right:0</div>
+    </div>
+  </div>
+    <p id="sliderValuesParagraph"></p>
+    <button id="submitButton">Control</button>
+  </div>
+
+  <script>
+    const leftSlider = document.getElementById('leftSlider');
+    const rightSlider = document.getElementById('rightSlider');
+    const leftSliderValue = document.getElementById('leftSliderValue');
+    const rightSliderValue = document.getElementById('rightSliderValue');
+    const sliderValuesParagraph = document.getElementById('sliderValuesParagraph');
+    const sliderValue1 = document.getElementById('sliderValue1');
+    const sliderValue2 = document.getElementById('sliderValue2');
+    const submitButton = document.getElementById('submitButton');
+    
+    // 初期化
+    leftSliderValue.textContent = leftSlider.value;
+    rightSliderValue.textContent = rightSlider.value;
+    
+    // スライダー値変更時の処理
+    leftSlider.addEventListener('input', () => {
+      sliderValue1.textContent = leftSlider.value
+    });
+    
+    rightSlider.addEventListener('input', () => {
+      sliderValue2.textContent = rightSlider.value;
+    });
+    
+    // サブミットボタンクリック時の非同期通信
+    submitButton.addEventListener('click', async () => {
+      const leftValue = sliderValue1.textContent;
+      const rightValue = sliderValue2.textContent;
+      const response = await fetch(`/control?left=${leftValue}&right=${rightValue}`);
+      const data = await response.text();
+      console.log(data);
+    });
+    
+    // 1秒ごとの非同期通信
+    setInterval(async () => {
+      const response = await fetch('/get_data');
+      const data = await response.json();
+      leftSlider.value = data.left;
+      rightSlider.value = data.right;
+      leftSliderValue.textContent = data.left;
+      rightSliderValue.textContent = data.right;
+    }, 1000);
+  </script>
+</body>
+</html>
