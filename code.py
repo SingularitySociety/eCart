@@ -1,54 +1,83 @@
-import os               # ファイル操作など、OSレベルの機能を提供するために使用
-import socketpool       # TCP/IP接続用のソケット管理用
-import wifi             # WiFi接続を管理用
-import digitalio        # デジタルピンの入出力を制御用
-from board import *     # マイクロコントローラーのボード定義から全てのピンをインポート
-import microcontroller  # マイクロコントローラーに関する情報（CPU温度等）を取得
-from adafruit_httpserver import Server, Request, Response, FileResponse # HTTPサーバー用ライブラリ
+import board
+import pwmio
+import digitalio
+import analogio
+import time
 
-led = digitalio.DigitalInOut(LED)           # 本体LEDをGPIO端子に割り当て
-led.direction = digitalio.Direction.OUTPUT  # LED端子を出力に設定
+# LEDの設定
+led = digitalio.DigitalInOut(board.LED)
+led.direction = digitalio.Direction.OUTPUT
 
-# グローバル変数
-state = "OFF!"  # 本体LED状態格納用
+# LEDの点灯
+led.value = True
 
-# Wi-FiアクセスポイントのSSIDとパスワードを取得（setting.tomlから取得する場合）
-ssid = os.getenv("CIRCUITPY_WIFI_SSID")         # Wi-Fi接続先SSID
-password = os.getenv("CIRCUITPY_WIFI_PASSWORD") # Wi-Fi接続先パスワード
-port_num = 80                                   # ポート番号（標準は80）
+# スロットルのPWMの設定
+t_pwm_l = pwmio.PWMOut(board.GP0, frequency=10000)
+t_pwm_r = pwmio.PWMOut(board.GP1, frequency=10000)
 
-# Wi-Fi接続を実行
-wifi.radio.connect(ssid, password)  # 指定したSSIDとパスワードで接続
-print("Connected to", ssid)         # 接続先SSID表示
+# ブレーキのPWMの設定
+b_pwm_l = pwmio.PWMOut(board.GP2, frequency=10000)
+b_pwm_r = pwmio.PWMOut(board.GP3, frequency=10000)
 
-# ソケットプールを作成してHTTPサーバーを起動するための準備
-pool = socketpool.SocketPool(wifi.radio)      # Wi-Fi接続上でソケットを管理するためのオブジェクトを作成
-server = Server(pool, "/static", debug=True)  # サーバー起動時にPicoWのルートディレクトリからデータを提供できるようにする
+# スロットルセンサーの設定
+sensor_throttle = analogio.AnalogIn(board.A0)
 
-# ルート（IPアドレス:ポート）アクセス時に実行される関数（トップページ表示、ポート80は省略可）
-@server.route("/")
-def base(request: Request):       # HTTPリクエストを処理する関数を定義
-    return FileResponse(request, filename='index.html', root_path='/')  # レスポンスとして「index.html」ファイルを返す
+# ブレーキセンサーの設定
+sensor_brake = analogio.AnalogIn(board.A1)
 
-# 本体LED点灯（IPアドレス:ポート/lighton）アクセス時に実行される関数（ポート80なら省略可）
-@server.route("/lighton")
-def light_on(request: Request):
-    led.value = True              # 本体LEDを点灯
-    return Response(request, "LED_ON!", content_type="text/plane")  # レスポンスとして「テキスト（文字列）」を返す
+# 前回の読み取り値を初期化
+t_before_read = int(sensor_throttle.value)
 
-# 本体LED消灯（IPアドレス:ポート/lightoff）アクセス時に実行される関数（ポート80なら省略可）
-@server.route("/lightoff")
-def light_on(request: Request):
-    led.value = False             # 本体LEDを消灯
-    return Response(request, "LED_OFF!", content_type="text/plane")
+# 急な操作をキャンセルするための差分閾値、緩やかに加速するための時間差、加速単位、制限値を設定
+diff_term = 0.1
+diff_unit = 1000
+diff_limit = 10000
+b_low_limit = 40000
+t_low_limit = 20000
+b_high_limit = 50000
+t_high_limit = 50000
 
-# 本体温度取得（IPアドレス:ポート/get_data）アクセス時に実行される関数（ポート80なら省略可）
-@server.route("/get_data")
-def get_data(request: Request):
-    temp = microcontroller.cpu.temperature  # 本体温度センサの温度取得
-    temp = "{:.1f}".format(temp)            # 温度の値を小数点1桁に成形
-    return Response(request, temp, content_type="text/plane")
+# 無限ループでスロットルセンサーの値を読み取り、PWMのデューティー比に反映する
+while True:
+    t_reading = int(sensor_throttle.value)
+    b_reading = int(sensor_brake.value)
 
-# HTTPサーバーを開始して待ち受けるIPアドレスを表示する
-print(f"Listening on http://{wifi.radio.ipv4_address}:{port_num}")  # f文字列を使って「IPアドレス」と「ポート番号」を埋め込んで表示
-server.serve_forever(str(wifi.radio.ipv4_address), port=port_num)   # HTTPサーバーを指定された「IPアドレス」と「ポート」で開始
+    # スロットルセンサーの値が上限値を超えた場合はスロットル値を0にする
+    if t_reading > t_high_limit:
+        t_reading = 0
+        b_reading = 65535
+
+    # ブレーキセンサーの値が上限値を超えた場合は上限値に制限する
+    if b_reading > b_high_limit:
+        b_reading = 65535
+
+    # 前回の値との差分が閾値を超えた場合は規定の加速単位で穏やかに加速する
+    if t_reading > t_before_read:
+        # 加速
+        if t_reading - t_before_read > diff_limit:
+            t_reading = int(t_before_read + diff_unit)
+        # スロットルセンサーの値をPWMのデューティー比に反映する
+        t_pwm_l.duty_cycle = t_reading
+        t_pwm_r.duty_cycle = t_reading
+    else:
+        # 減速
+        # スロットルセンサーの値をPWMのデューティー比に反映する
+        t_pwm_l.duty_cycle = t_reading
+        t_pwm_r.duty_cycle = t_reading
+
+    #  加速に合わせ、ブレーキセンサー値がスロットルセンサー値を下回る場合はデューティー比を0(ブレーキなし)にする
+    if b_reading < t_reading:
+        b_reading = 0
+    else:
+        pass
+    
+    # ブレーキセンサーの値をPWMのデューティー比に反映する
+    b_pwm_l.duty_cycle = b_reading
+    b_pwm_r.duty_cycle = b_reading
+
+    # 値の確認のために、前回の値、現在の値、制限フラグを出力する
+    print(str(t_before_read) + " " + str(t_reading) + " " + str(b_reading))
+
+    # 前回の値を更新して、一定時間待つ
+    t_before_read = t_reading
+    time.sleep(diff_term)
