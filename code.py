@@ -25,18 +25,22 @@ sensor_throttle = analogio.AnalogIn(board.A0)
 # 左右センサーの設定
 sensor_angle = analogio.AnalogIn(board.A1)
 
-# 急な操作をキャンセルするための差分閾値、緩やかに加速するための時間差、加速単位、制限値を設定
-diff_term = 0.1
-t_diff_unit = 1000
-b_diff_unit = 5000
-diff_limit = 10000
-b_low_limit = 40000
-t_low_limit = 20000
-b_high_limit = 50000
-t_high_limit = 50000
-straight_range = 10000
-a_center = 32767
-high_max = 65535
+# パラメータの設定
+# これらはデバイスの動作を制御するための値です
+diff_term = 0.01         # 急な操作をキャンセルするための差分単位
+t_diff_unit = 1      # スロットルの急な操作をキャンセルするための差分単位
+b_diff_unit = 1      # ブレーキの急な操作をキャンセルするための差分単位
+diff_limit = 10000      # 急な操作をキャンセルするための差分の上限値
+b_low_limit = 40000     # ブレーキの急な操作をキャンセルするための下限値
+t_low_limit = 20000     # スロットルの急な操作をキャンセルするための下限値
+b_high_limit = 50000    # ブレーキの急な操作をキャンセルするための上限値
+t_high_limit = 50000    # スロットルの急な操作をキャンセルするための上限値
+straight_range = 10000  # 直進時の急な操作をキャンセルするための制限値
+a_center = 32767        # ステアリング角度の中央値
+a_trim = 0              # ステアリング角度の調整値
+high_max = 65535        # アナログ入力の最大値
+
+a_trim = -10000
 
 # 前回の読み取り値を初期化
 t_before_read = int(sensor_throttle.value)
@@ -45,13 +49,26 @@ a_before_read = a_center
 
 # 無限ループでスロットルセンサーの値を読み取り、PWMのデューティー比に反映する
 while True:
+    # ...（ループ内の処理）
+    # ループ内では、スロットルセンサーとステアリング角度センサーの値を読み取り、
+    # それらをPWM出力に反映させています。また、異常値や急な操作に対応するための
+    # ロジックも含まれています。
+
+    # センサーから現在の値を読み取る
     t_reading = int(sensor_throttle.value)
-    a_reading = int(sensor_angle.value)
+    a_reading = int(sensor_angle.value) + a_trim
+
+    # ステアリング角度が中央値より大きい場合、右に移動するため左側の減算はせずに、右側の減算値を計算する
     if a_reading > a_center:
+        # 左側の減算値は0
         l_subtract = 0
-        r_subtract = a_reading - a_center - straight_range
+        # 右側の減算値は読み込み値から中央値と直進制限値を引いた値
+        r_subtract = a_reading - a_center
+    # ステアリング角度が中央値より小さい場合、左に移動するため右側の減算はせずに、左側の減算値を計算する
     else:
-        l_subtract = a_center - a_reading - straight_range
+        # 左側の減算値は中央値から読み込み値と直進制限値を引いた値
+        l_subtract = a_center - a_reading
+        # 右側の減算値は0
         r_subtract = 0
     
     # スロットルセンサーの値が上限値を超えた場合はスロットル値を0, ブレーキ値を最大値にする
@@ -82,26 +99,39 @@ while True:
                 else:
                     b_reading = int(b_before_read + b_diff_unit)
 
-    # スロットルセンサーの値をPWMのデューティー比に反映する
-    if t_reading - l_subtract < 0:
-        t_reading_l = 0
-    else:
-        t_reading_l = t_reading - l_subtract
+    # 左右のPWM値を設定する。
+    # 左側
+    t_value_l = t_reading - l_subtract
+    if t_value_l <= 0:
+        t_value_l = 0
+        b_value_l = high_max
+    if l_subtract >= 0:
+        b_value_l = b_reading
+
+    # 右側
+    t_value_r = t_reading - r_subtract
+    if t_value_r <= 0:
+        t_value_r = 0
+        b_value_r = high_max
+    if r_subtract >= 0:
+        b_value_r = b_reading
     
-    if t_reading - r_subtract < 0:
-        t_reading_r = 0
-    else:
-        t_reading_r = t_reading - r_subtract
-    t_pwm_l.duty_cycle = t_reading_l
-    t_pwm_r.duty_cycle = t_reading_r
+    # PWM出力の更新
+    # スロットル値をPWMのデューティー比に反映する
+    t_pwm_l.duty_cycle = t_value_l
+    t_pwm_r.duty_cycle = t_value_r
     # ブレーキ値をPWMのデューティー比に反映する
-    b_pwm_l.duty_cycle = b_reading
-    b_pwm_r.duty_cycle = b_reading
+    b_pwm_l.duty_cycle = b_value_l
+    b_pwm_r.duty_cycle = b_value_r
 
     # 値の確認のために、前回の値、現在の値、制限フラグを出力する
-    print(str(t_before_read) + " " + str(t_reading_l) + " " + str(t_reading_r) + " " + str(b_before_read) + " " + str(b_reading))
+    print(str(a_reading) + " " + str(t_value_l) + " " + str(t_value_r) + " " + str(b_value_l) + " " + str(b_value_r))
 
-    # 前回の値を更新して、一定時間待つ
+    # 前回のスロットル値とブレーキ値を更新し、次のループでの比較のために保存する。
     t_before_read = t_reading
     b_before_read = b_reading
+    # プログラムの実行を一時的に中断し一定の時間間隔を設ける。
+    # 制御信号が適切なレートで更新されるようにセンサーからのデータの読み取りやPWM信号の更新を待つ。
     time.sleep(diff_term)
+
+
