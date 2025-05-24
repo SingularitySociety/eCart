@@ -27,9 +27,9 @@ sensor_angle = analogio.AnalogIn(board.A1)
 
 # パラメータの設定
 # これらはデバイスの動作を制御するための値です
-diff_term = 0.01         # 急な操作をキャンセルするための差分単位
-t_diff_unit = 1      # スロットルの急な操作をキャンセルするための差分単位
-b_diff_unit = 1      # ブレーキの急な操作をキャンセルするための差分単位
+diff_term = 0.01        # 急な操作をキャンセルするための差分単位
+t_diff_unit = 1         # スロットルの急な操作をキャンセルするための差分単位
+b_diff_unit = 1000         # ブレーキの急な操作をキャンセルするための差分単位
 diff_limit = 10000      # 急な操作をキャンセルするための差分の上限値
 b_low_limit = 40000     # ブレーキの急な操作をキャンセルするための下限値
 t_low_limit = 20000     # スロットルの急な操作をキャンセルするための下限値
@@ -40,12 +40,13 @@ a_center = 32767        # ステアリング角度の中央値
 a_trim = 0              # ステアリング角度の調整値
 high_max = 65535        # アナログ入力の最大値
 
-a_trim = -10000
+a_trim = -9500
 
 # 前回の読み取り値を初期化
 t_before_read = int(sensor_throttle.value)
 b_before_read = high_max
 a_before_read = a_center
+b_reading = high_max
 
 # 無限ループでスロットルセンサーの値を読み取り、PWMのデューティー比に反映する
 while True:
@@ -71,15 +72,25 @@ while True:
         # 右側の減算値は0
         r_subtract = 0
     
+    o_reading = t_reading
     # スロットルセンサーの値が上限値を超えた場合はスロットル値を0, ブレーキ値を最大値にする
     if t_reading > t_high_limit:
-        t_reading = t_low_limit
         b_reading = high_max
+        t_reading = t_low_limit
+        if int(b_before_read + b_diff_unit) > high_max:
+            b_reading = high_max
+        else:
+            b_reading = int(b_before_read + b_diff_unit)
+        # print("t_reading > t_high_limit:" + str(b_reading) + "  b_before_read:" + str(b_before_read) + " b_diff_unit" + str(b_diff_unit))
     else:
         # スロットルセンサーの値が下限値を下回った場合はスロットル値を0, ブレーキ値を最大値にする
         if t_reading < t_low_limit:
             t_reading = t_low_limit
-            b_reading = high_max
+            if int(b_before_read + b_diff_unit) > high_max:
+                b_reading = high_max
+            else:
+                b_reading = int(b_before_read + b_diff_unit)
+            # print("t_reading > t_high_limit:" + str(b_reading) + "  b_before_read:" + str(b_before_read) + " b_diff_unit" + str(b_diff_unit))
         else:
             b_reading = 0
 
@@ -94,7 +105,7 @@ while True:
             # 減速
             if b_reading - b_before_read > diff_limit:
                 # 緊急ブレーキ
-                if b_reading == high_max:
+                if b_reading == b_high_limit:
                     pass
                 else:
                     b_reading = int(b_before_read + b_diff_unit)
@@ -125,7 +136,7 @@ while True:
     b_pwm_r.duty_cycle = b_value_r
 
     # 値の確認のために、前回の値、現在の値、制限フラグを出力する
-    print(str(a_reading) + " " + str(t_value_l) + " " + str(t_value_r) + " " + str(b_value_l) + " " + str(b_value_r))
+    print(str(a_reading) + " " + str(o_reading) + " " + str(t_value_l) + " " + str(t_value_r) + " " + str(b_value_l) + " " + str(b_value_r))
 
     # 前回のスロットル値とブレーキ値を更新し、次のループでの比較のために保存する。
     t_before_read = t_reading
